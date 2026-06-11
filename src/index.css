@@ -1,7 +1,13 @@
 @import 'tailwindcss';
 
+@font-face {
+  font-family: 'Toolbox CJK';
+  src: url('/fonts/Deng.ttf') format('truetype');
+  font-display: swap;
+}
+
 @theme {
-  --font-sans: 'Plus Jakarta Sans', 'Noto Sans SC', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', 'Toolbox CJK', 'Noto Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei', 'PingFang SC', 'WenQuanYi Micro Hei', ui-sans-serif, system-ui, sans-serif;
   --color-toolbox-ink: #164e63;
   --color-toolbox-muted: #477083;
   --color-toolbox-primary: #0891b2;
@@ -42,7 +48,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -56,4 +64,39 @@ a {
 
 @utility focus-ring {
   @apply focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-toolbox-cyan;
+}
+
+@keyframes toolbox-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes toolbox-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.toolbox-modal-backdrop {
+  animation: toolbox-fade-in 180ms ease-out both;
+}
+
+.toolbox-modal-panel {
+  animation: toolbox-modal-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbox-modal-backdrop,
+  .toolbox-modal-panel {
+    animation: none;
+  }
 }

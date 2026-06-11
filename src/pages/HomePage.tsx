@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
+import { DateTimeToolModal } from '../components/DateTimeToolModal'
 import { SearchInput } from '../components/SearchInput'
 import { ToolCard } from '../components/ToolCard'
 import { tools } from '../data/tools'
 
 export function HomePage() {
   const [query, setQuery] = useState('')
+  const [isDateTimeToolOpen, setIsDateTimeToolOpen] = useState(false)
 
   const filteredTools = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase()
@@ -40,7 +42,7 @@ export function HomePage() {
         {filteredTools.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {filteredTools.map((tool) => (
-              <ToolCard key={tool.slug} tool={tool} />
+              <ToolCard key={tool.slug} tool={tool} onOpen={tool.slug === 'date-time' ? () => setIsDateTimeToolOpen(true) : undefined} />
             ))}
           </div>
         ) : (
@@ -50,6 +52,8 @@ export function HomePage() {
           </div>
         )}
       </section>
+
+      {isDateTimeToolOpen && <DateTimeToolModal onClose={() => setIsDateTimeToolOpen(false)} />}
     </div>
   )
 }

@@ -3,14 +3,11 @@ import type { Tool } from '../data/tools'
 
 type ToolCardProps = {
   tool: Tool
+  onOpen?: () => void
 }
 
-export function ToolCard({ tool }: ToolCardProps) {
+function ToolCardContent({ tool }: { tool: Tool }) {
   return (
-    <Link
-      to={tool.path}
-      className="focus-ring group rounded-[2rem] border border-toolbox-line bg-toolbox-white p-6 shadow-toolbox-soft transition-all duration-200 hover:-translate-y-1 hover:border-toolbox-cyan hover:shadow-toolbox-card"
-    >
       <div className="flex h-full flex-col gap-5">
         <div className="flex items-start justify-between gap-4">
           <div className="grid size-12 place-items-center rounded-2xl bg-toolbox-mist text-sm font-black text-toolbox-primary ring-1 ring-toolbox-cyan/50">
@@ -32,6 +29,24 @@ export function ToolCard({ tool }: ToolCardProps) {
           ))}
         </div>
       </div>
+  )
+}
+
+export function ToolCard({ tool, onOpen }: ToolCardProps) {
+  const className =
+    'focus-ring group rounded-[2rem] border border-toolbox-line bg-toolbox-white p-6 text-left shadow-toolbox-soft transition-all duration-200 hover:-translate-y-1 hover:border-toolbox-cyan hover:shadow-toolbox-card'
+
+  if (onOpen) {
+    return (
+      <button type="button" onClick={onOpen} className={`${className} cursor-pointer`}>
+        <ToolCardContent tool={tool} />
+      </button>
+    )
+  }
+
+  return (
+    <Link to={tool.path} className={className}>
+      <ToolCardContent tool={tool} />
     </Link>
   )
 }

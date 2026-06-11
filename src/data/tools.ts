@@ -11,7 +11,7 @@ export const tools: Tool[] = [
     name: '日期时间工具',
     slug: 'date-time',
     path: '/tools/date-time',
-    description: '日期、时间戳相关工具占位页',
+    description: '查看当前时间，完成时间戳与日期互转',
     keywords: ['日期', '时间', '时间戳', 'date', 'time', 'timestamp'],
   },
   {
