@@ -32,7 +32,7 @@ export const tools: Tool[] = [
     name: 'JSON 工具',
     slug: 'json',
     path: '/tools/json',
-    description: 'JSON 格式化相关工具占位页',
+    description: 'JSON 格式化、压缩与校验工具',
     keywords: ['json', '格式化', '压缩', '校验', 'format', 'validate'],
   },
 ]

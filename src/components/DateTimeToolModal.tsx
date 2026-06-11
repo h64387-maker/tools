@@ -1,23 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 type DateTimeToolModalProps = {
   onClose: () => void
 }
 
-type ConvertMode = 'timestamp-to-date' | 'date-to-timestamp'
 type TimestampUnit = 'seconds' | 'milliseconds'
 type TimeZoneMode = 'local' | 'utc'
-type SelectId = 'mode' | 'unit' | 'timeZone'
+type SelectId = 'unit' | 'timeZone'
 
 type SelectOption<T extends string> = {
   label: string
   value: T
 }
 
-const modeOptions: SelectOption<ConvertMode>[] = [
-  { label: '时间戳转日期', value: 'timestamp-to-date' },
-  { label: '日期转时间戳', value: 'date-to-timestamp' },
-]
+type Toast = {
+  message: string
+  type: 'error' | 'success'
+}
 
 const unitOptions: SelectOption<TimestampUnit>[] = [
   { label: '秒级', value: 'seconds' },
@@ -66,15 +66,17 @@ function parseDateInput(value: string, timeZone: TimeZoneMode) {
 
 export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
   const panelRef = useRef<HTMLElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const [now, setNow] = useState(() => new Date())
-  const [mode, setMode] = useState<ConvertMode>('timestamp-to-date')
   const [unit, setUnit] = useState<TimestampUnit>('seconds')
   const [timeZone, setTimeZone] = useState<TimeZoneMode>('local')
   const [openSelect, setOpenSelect] = useState<SelectId | null>(null)
-  const [input, setInput] = useState('')
-  const [output, setOutput] = useState('')
-  const [error, setError] = useState('')
-  const [copyStatus, setCopyStatus] = useState('')
+  const [timestampInput, setTimestampInput] = useState('')
+  const [timestampOutput, setTimestampOutput] = useState('')
+  const [dateInput, setDateInput] = useState('')
+  const [dateOutput, setDateOutput] = useState('')
+  const [toast, setToast] = useState<Toast | null>(null)
+  const [toastExiting, setToastExiting] = useState(false)
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000)
@@ -83,9 +85,62 @@ export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
   }, [])
 
   useEffect(() => {
+    const previouslyFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const previousBodyOverflow = document.body.style.overflow
+
+    document.body.style.overflow = 'hidden'
+    window.setTimeout(() => closeButtonRef.current?.focus(), 0)
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow
+      previouslyFocusedElement?.focus()
+    }
+  }, [])
+
+  useEffect(() => {
+    const getFocusableElements = () => {
+      const panel = panelRef.current
+
+      if (!panel) {
+        return []
+      }
+
+      return Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      )
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         onClose()
+        return
+      }
+
+      if (event.key !== 'Tab') {
+        return
+      }
+
+      const focusableElements = getFocusableElements()
+
+      if (focusableElements.length === 0) {
+        event.preventDefault()
+        return
+      }
+
+      const firstElement = focusableElements[0]
+      const lastElement = focusableElements[focusableElements.length - 1]
+
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault()
+        lastElement.focus()
+        return
+      }
+
+      if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault()
+        firstElement.focus()
       }
     }
 
@@ -106,6 +161,20 @@ export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
     return () => window.removeEventListener('pointerdown', handlePointerDown)
   }, [])
 
+  useEffect(() => {
+    if (!toast) {
+      return
+    }
+
+    const fadeTimer = window.setTimeout(() => setToastExiting(true), 1800)
+    const removeTimer = window.setTimeout(() => setToast(null), 2200)
+
+    return () => {
+      window.clearTimeout(fadeTimer)
+      window.clearTimeout(removeTimer)
+    }
+  }, [toast])
+
   const currentTimestamp = useMemo(() => {
     const milliseconds = now.getTime()
 
@@ -114,75 +183,85 @@ export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
 
   const currentTimeText = useMemo(() => formatDate(now, timeZone), [now, timeZone])
 
-  const inputPlaceholder = mode === 'timestamp-to-date' ? '例如：1704067200 或 1704067200000' : '例如：2024-01-01 08:00:00'
+  const clearToast = () => {
+    setToast(null)
+    setToastExiting(false)
+  }
+  const showToast = (type: Toast['type'], message: string) => {
+    setToastExiting(false)
+    setToast({ type, message })
+  }
 
-  const handleConvert = () => {
-    setError('')
-    setCopyStatus('')
+  const handleTimestampToDate = () => {
+    clearToast()
 
-    if (!input.trim()) {
-      setOutput('')
-      setError('请输入需要转换的内容')
+    if (!timestampInput.trim()) {
+      setTimestampOutput('')
+      showToast('error', '请输入需要转换的时间戳')
       return
     }
 
-    if (mode === 'timestamp-to-date') {
-      const timestamp = Number(input.trim())
+    const timestamp = Number(timestampInput.trim())
 
-      if (!Number.isFinite(timestamp)) {
-        setOutput('')
-        setError('时间戳只能包含数字')
-        return
-      }
-
-      const milliseconds = unit === 'seconds' ? timestamp * 1000 : timestamp
-      const date = new Date(milliseconds)
-
-      if (Number.isNaN(date.getTime())) {
-        setOutput('')
-        setError('时间戳超出可解析范围')
-        return
-      }
-
-      setOutput(formatDate(date, timeZone))
+    if (!Number.isFinite(timestamp)) {
+      setTimestampOutput('')
+      showToast('error', '时间戳只能包含数字')
       return
     }
 
-    const milliseconds = parseDateInput(input, timeZone)
+    const milliseconds = unit === 'seconds' ? timestamp * 1000 : timestamp
+    const date = new Date(milliseconds)
+
+    if (Number.isNaN(date.getTime())) {
+      setTimestampOutput('')
+      showToast('error', '时间戳超出可解析范围')
+      return
+    }
+
+    setTimestampOutput(formatDate(date, timeZone))
+  }
+
+  const handleDateToTimestamp = () => {
+    clearToast()
+
+    if (!dateInput.trim()) {
+      setDateOutput('')
+      showToast('error', '请输入需要转换的日期')
+      return
+    }
+
+    const milliseconds = parseDateInput(dateInput, timeZone)
 
     if (Number.isNaN(milliseconds)) {
-      setOutput('')
-      setError('日期格式无法识别，请使用 YYYY-MM-DD HH:mm:ss')
+      setDateOutput('')
+      showToast('error', '日期格式无法识别，请使用 YYYY-MM-DD HH:mm:ss')
       return
     }
 
-    setOutput(unit === 'seconds' ? Math.floor(milliseconds / 1000).toString() : milliseconds.toString())
+    setDateOutput(unit === 'seconds' ? Math.floor(milliseconds / 1000).toString() : milliseconds.toString())
   }
 
-  const handleUseNow = () => {
-    setError('')
-    setCopyStatus('')
-
-    if (mode === 'timestamp-to-date') {
-      setInput(currentTimestamp)
-      return
-    }
-
-    setInput(timeZone === 'utc' ? now.toISOString().slice(0, 19).replace('T', ' ') : currentTimeText)
+  const handleUseCurrentTimestamp = () => {
+    setTimestampInput(currentTimestamp)
+    clearToast()
   }
 
-  const handleCopy = async () => {
-    if (!output) {
-      setCopyStatus('')
-      setError('没有可复制的结果')
+  const handleUseCurrentDate = () => {
+    setDateInput(timeZone === 'utc' ? now.toISOString().slice(0, 19).replace('T', ' ') : currentTimeText)
+    clearToast()
+  }
+
+  const handleCopy = async (value: string, label: string) => {
+    if (!value) {
+      showToast('error', label === '日期' ? '没有可复制的日期结果' : '没有可复制的时间戳结果')
       return
     }
 
     try {
-      await navigator.clipboard.writeText(output)
+      await navigator.clipboard.writeText(value)
     } catch {
       const textarea = document.createElement('textarea')
-      textarea.value = output
+      textarea.value = value
       textarea.setAttribute('readonly', '')
       textarea.style.position = 'fixed'
       textarea.style.opacity = '0'
@@ -192,15 +271,19 @@ export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
       textarea.remove()
     }
 
-    setError('')
-    setCopyStatus('结果已复制')
+    showToast('success', `${label}结果已复制`)
   }
 
-  const handleClear = () => {
-    setInput('')
-    setOutput('')
-    setError('')
-    setCopyStatus('')
+  const handleClearTimestampForm = () => {
+    setTimestampInput('')
+    setTimestampOutput('')
+    clearToast()
+  }
+
+  const handleClearDateForm = () => {
+    setDateInput('')
+    setDateOutput('')
+    clearToast()
   }
 
   const renderSelectField = <T extends string>(
@@ -213,22 +296,22 @@ export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
     const selectedOption = options.find((option) => option.value === value)
 
     return (
-      <div className="relative grid gap-2 text-sm font-bold text-toolbox-muted">
+      <div className="relative grid gap-2 text-sm font-bold text-slate-500">
         <span>{label}</span>
         <button
           type="button"
           onClick={() => setOpenSelect((current) => (current === id ? null : id))}
-          className="focus-ring flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl border border-toolbox-line bg-[linear-gradient(180deg,var(--color-toolbox-white),var(--color-toolbox-mist))] py-3 pl-4 pr-4 text-left text-base font-black text-toolbox-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.95),0_16px_36px_-30px_rgb(8_145_178/0.8)] transition-all duration-200 hover:border-toolbox-cyan focus:border-toolbox-cyan focus:outline-none focus:ring-4 focus:ring-toolbox-cyan/20"
+          className="focus-ring flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl border border-white/10 bg-slate-950/80 py-2.5 pl-4 pr-4 text-left text-base font-black text-slate-100 shadow-[inset_0_1px_0_rgb(255_255_255/0.06),0_18px_44px_-34px_rgb(34_211_238/0.75)] transition-all duration-200 hover:border-cyan-300/40 focus:border-cyan-300/50 focus:outline-none focus:ring-4 focus:ring-cyan-300/15"
           aria-haspopup="listbox"
           aria-expanded={openSelect === id}
         >
           <span>{selectedOption?.label}</span>
-          <svg className={`size-4 text-toolbox-primary transition-transform duration-200 ${openSelect === id ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <svg className={`size-4 text-cyan-300 transition-transform duration-200 ${openSelect === id ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="m7 10 5 5 5-5" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
         {openSelect === id && (
-          <div className="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-toolbox-line bg-toolbox-white p-1.5 shadow-toolbox-card" role="listbox">
+          <div className="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#0d121c] p-1.5 shadow-[0_28px_80px_-48px_rgb(0_0_0/0.95)]" role="listbox">
             {options.map((option) => (
               <button
                 key={option.value}
@@ -238,7 +321,7 @@ export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
                   setOpenSelect(null)
                 }}
                 className={`flex w-full cursor-pointer items-center rounded-xl px-4 py-2.5 text-left text-sm font-black transition-colors duration-200 ${
-                  option.value === value ? 'bg-toolbox-ink text-toolbox-white' : 'text-toolbox-ink hover:bg-toolbox-mist'
+                  option.value === value ? 'bg-cyan-300/15 text-cyan-100' : 'text-slate-300 hover:bg-white/[0.06] hover:text-white'
                 }`}
                 role="option"
                 aria-selected={option.value === value}
@@ -252,127 +335,229 @@ export function DateTimeToolModal({ onClose }: DateTimeToolModalProps) {
     )
   }
 
-  return (
-    <div className="toolbox-modal-backdrop fixed inset-0 z-50 grid place-items-center bg-toolbox-ink/35 px-6 py-6 backdrop-blur-sm" role="presentation">
+  const handleBackdropClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      onClose()
+    }
+  }
+
+  return createPortal(
+    <div className="toolbox-modal-backdrop fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 px-4 py-6 backdrop-blur-xl sm:px-6" onClick={handleBackdropClick} role="presentation">
       <section
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="date-time-tool-title"
-        className="toolbox-modal-panel w-full max-w-6xl rounded-[2rem] border border-toolbox-line bg-toolbox-white p-6 shadow-toolbox-card"
+        className="toolbox-modal-panel relative max-h-[calc(100dvh-3rem)] w-full max-w-7xl overflow-y-auto rounded-[2rem] border border-white/10 bg-gradient-to-br from-cyan-400/20 via-sky-500/10 to-emerald-400/20 p-px shadow-[0_40px_120px_-64px_rgb(34_211_238/0.55)]"
       >
-        <div className="flex items-center justify-between border-b border-toolbox-line pb-4">
-          <div className="flex items-end gap-4">
-            <h2 id="date-time-tool-title" className="text-3xl font-black tracking-tight text-toolbox-ink">
-              日期时间工具
-            </h2>
-            <span className="pb-1 text-sm font-semibold text-toolbox-muted">查看当前时间，完成时间戳与日期互转</span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="focus-ring inline-flex size-10 cursor-pointer items-center justify-center rounded-xl border border-toolbox-line bg-toolbox-white text-toolbox-muted transition-colors duration-200 hover:bg-toolbox-mist hover:text-toolbox-ink"
-            aria-label="关闭日期时间工具"
+        {toast && (
+          <div
+            className={`pointer-events-none absolute left-1/2 top-1/2 z-30 w-[min(calc(100%-2rem),26rem)] -translate-x-1/2 -translate-y-1/2 transition-all duration-300 ease-out ${
+              toastExiting ? 'scale-95 opacity-0' : 'scale-100 opacity-100'
+            }`}
+            role="status"
+            aria-live="polite"
           >
-            <svg className="size-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="mt-4 grid items-start gap-6 lg:grid-cols-[0.95fr_1.45fr]">
-          <aside className="rounded-[1.5rem] border border-toolbox-line bg-[linear-gradient(145deg,var(--color-toolbox-mist),var(--color-toolbox-white))] p-5 shadow-[inset_0_1px_0_rgb(255_255_255/0.9)]">
-            <p className="text-sm font-black uppercase tracking-[0.18em] text-toolbox-primary">当前时间</p>
-            <p className="mt-3 break-all text-3xl font-black tracking-tight text-toolbox-ink">{currentTimeText}</p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl bg-toolbox-white/85 p-4 shadow-[0_18px_40px_-32px_rgb(8_145_178/0.65)] ring-1 ring-toolbox-line">
-                <p className="text-sm font-bold text-toolbox-muted">时间戳</p>
-                <p className="mt-2 break-all text-xl font-black text-toolbox-ink">{currentTimestamp}</p>
-              </div>
-              <div className="rounded-2xl bg-toolbox-white/85 p-4 shadow-[0_18px_40px_-32px_rgb(8_145_178/0.65)] ring-1 ring-toolbox-line">
-                <p className="text-sm font-bold text-toolbox-muted">显示</p>
-                <p className="mt-2 text-xl font-black text-toolbox-ink">{timeZone === 'local' ? '本地' : 'UTC'}</p>
-              </div>
-            </div>
-          </aside>
-
-          <div className="grid gap-4">
-            <div className="grid gap-3 rounded-[1.5rem] border border-toolbox-line bg-[linear-gradient(180deg,var(--color-toolbox-white),var(--color-toolbox-surface))] p-4 shadow-[0_20px_50px_-42px_rgb(8_145_178/0.75)]">
-              <span className="text-base font-black text-toolbox-ink">选项</span>
-              <div className="grid grid-cols-3 gap-3">
-                {renderSelectField('mode', '转换类型', mode, modeOptions, (value) => {
-                  setMode(value)
-                  handleClear()
-                })}
-                {renderSelectField('unit', '时间戳单位', unit, unitOptions, setUnit)}
-                {renderSelectField('timeZone', '时区显示', timeZone, timeZoneOptions, setTimeZone)}
-              </div>
-            </div>
-
-            <label className="grid gap-2 text-sm font-bold text-toolbox-muted">
-              输入框
-              <input
-                value={input}
-                onChange={(event) => {
-                  setInput(event.target.value)
-                  setError('')
-                  setCopyStatus('')
-                }}
-                placeholder={inputPlaceholder}
-                className="focus-ring rounded-[1.35rem] border border-toolbox-line bg-[linear-gradient(180deg,var(--color-toolbox-white),var(--color-toolbox-surface))] px-5 py-4 text-base font-semibold text-toolbox-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.95),0_16px_36px_-32px_rgb(8_145_178/0.7)] transition-all duration-200 placeholder:text-toolbox-muted/70 hover:border-toolbox-cyan focus:border-toolbox-cyan focus:outline-none focus:ring-4 focus:ring-toolbox-cyan/20"
-              />
-            </label>
-
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={handleConvert}
-                className="focus-ring inline-flex cursor-pointer items-center justify-center rounded-full bg-toolbox-ink px-6 py-3 text-base font-black text-toolbox-white transition-colors duration-200 hover:bg-toolbox-primary"
-              >
-                开始转换
-              </button>
-              <button
-                type="button"
-                onClick={handleUseNow}
-                className="focus-ring inline-flex cursor-pointer items-center justify-center rounded-full border border-toolbox-cyan bg-toolbox-mist px-6 py-3 text-base font-black text-toolbox-primary transition-colors duration-200 hover:bg-toolbox-cyan/20"
-              >
-                填入当前时间
-              </button>
-              <button
-                type="button"
-                onClick={handleClear}
-                className="focus-ring inline-flex cursor-pointer items-center justify-center rounded-full border border-toolbox-line bg-toolbox-white px-6 py-3 text-base font-black text-toolbox-ink transition-colors duration-200 hover:bg-toolbox-mist"
-              >
-                清空内容
-              </button>
-            </div>
-
-            {(error || copyStatus) && (
-              <p className={`rounded-2xl px-4 py-3 text-sm font-bold ${error ? 'bg-red-50 text-red-700 ring-1 ring-red-100' : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'}`}>
-                {error || copyStatus}
-              </p>
-            )}
-
-            <label className="grid gap-2 text-sm font-bold text-toolbox-muted">
-              输出框
-              <textarea
-                value={output}
-                readOnly
-                placeholder="转换结果会显示在这里"
-                className="focus-ring min-h-24 resize-y rounded-[1.35rem] border border-toolbox-line bg-[linear-gradient(180deg,var(--color-toolbox-mist),var(--color-toolbox-white))] px-5 py-4 text-base font-black text-toolbox-ink shadow-[inset_0_1px_0_rgb(255_255_255/0.95)] transition-all duration-200 placeholder:text-toolbox-muted/70 hover:border-toolbox-cyan focus:border-toolbox-cyan focus:outline-none focus:ring-4 focus:ring-toolbox-cyan/20"
-              />
-            </label>
-
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="focus-ring inline-flex w-fit cursor-pointer items-center justify-center rounded-full bg-toolbox-green px-6 py-3 text-base font-black text-toolbox-white transition-colors duration-200 hover:bg-emerald-600"
+            <p
+              className={`rounded-2xl border px-5 py-4 text-center text-sm font-black shadow-[0_28px_80px_-36px_rgb(0_0_0/0.95)] backdrop-blur-xl ${
+                toast.type === 'success'
+                  ? 'border-emerald-300/25 bg-emerald-300/15 text-emerald-100'
+                  : 'border-red-400/25 bg-red-400/15 text-red-100'
+              }`}
             >
-              复制结果
+              {toast.message}
+            </p>
+          </div>
+        )}
+        <div className="rounded-[2rem] bg-[#0a0f17]/95 p-4 pb-6 lg:p-5 lg:pb-6">
+          <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan-300">Command Runner</p>
+              <h2 id="date-time-tool-title" className="mt-3 text-3xl font-black tracking-tight text-white md:text-4xl">
+                日期时间工具
+              </h2>
+              <span className="mt-2 block text-sm font-semibold text-slate-500">查看当前时间，完成时间戳与日期互转</span>
+            </div>
+            <button
+              ref={closeButtonRef}
+              type="button"
+              onClick={onClose}
+              className="focus-ring inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-400 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+              aria-label="关闭日期时间工具"
+            >
+              <svg className="size-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
             </button>
+          </div>
+
+          <div className="mt-4 grid gap-4">
+            <div className="grid items-start gap-4 lg:grid-cols-[0.95fr_2.05fr]">
+              <aside className="demo-breathing-border rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.06)]">
+              <p className="text-sm font-black uppercase tracking-[0.18em] text-cyan-300">当前时间</p>
+              <p className="mt-3 break-all text-2xl font-black tracking-tight text-white md:text-3xl">{currentTimeText}</p>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 shadow-[0_18px_44px_-34px_rgb(34_211_238/0.5)]">
+                  <p className="text-sm font-bold text-slate-500">时间戳</p>
+                  <p className="mt-2 break-all text-xl font-black text-slate-100">{currentTimestamp}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 shadow-[0_18px_44px_-34px_rgb(34_211_238/0.5)]">
+                  <p className="text-sm font-bold text-slate-500">显示</p>
+                  <p className="mt-2 text-xl font-black text-slate-100">{timeZone === 'local' ? '本地' : 'UTC'}</p>
+                </div>
+              </div>
+              </aside>
+
+              <div className="grid gap-3 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-3 shadow-[0_20px_60px_-48px_rgb(0_0_0/0.95)]">
+                <span className="text-base font-black text-white">全局选项</span>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {renderSelectField('unit', '时间戳单位', unit, unitOptions, setUnit)}
+                  {renderSelectField('timeZone', '时区显示', timeZone, timeZoneOptions, setTimeZone)}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
+                <section className="grid gap-4 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_-48px_rgb(0_0_0/0.95)]" aria-labelledby="timestamp-to-date-title">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-300">Timestamp to Date</p>
+                    <h3 id="timestamp-to-date-title" className="mt-2 text-xl font-black text-white">时间戳转日期</h3>
+                  </div>
+
+                  <label className="grid gap-2 text-sm font-bold text-slate-500">
+                    时间戳输入
+                    <input
+                      value={timestampInput}
+                      onChange={(event) => {
+                        setTimestampInput(event.target.value)
+                        clearToast()
+                      }}
+                      placeholder="例如：1704067200 或 1704067200000"
+                      className="focus-ring rounded-[1.35rem] border border-white/10 bg-slate-950/80 px-5 py-3 text-base font-semibold text-slate-100 shadow-[inset_0_1px_0_rgb(255_255_255/0.06),0_16px_42px_-34px_rgb(34_211_238/0.65)] transition-all duration-200 placeholder:text-slate-600 hover:border-cyan-300/40 focus:border-cyan-300/50 focus:outline-none focus:ring-4 focus:ring-cyan-300/15"
+                    />
+                  </label>
+
+                  <div className="grid gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTimestampToDate}
+                      className="focus-ring inline-flex w-full cursor-pointer items-center justify-center rounded-full bg-cyan-300 px-5 py-2.5 text-sm font-black text-slate-950 transition-colors duration-200 hover:bg-cyan-200"
+                    >
+                      转换为日期
+                    </button>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={handleUseCurrentTimestamp}
+                        className="focus-ring inline-flex cursor-pointer items-center justify-center rounded-full border border-cyan-300/25 bg-cyan-300/10 px-4 py-2.5 text-sm font-black text-cyan-100 transition-colors duration-200 hover:bg-cyan-300/15"
+                      >
+                        填入当前时间戳
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearTimestampForm}
+                        className="focus-ring inline-flex cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-black text-slate-200 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+                      >
+                        清空
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid gap-2 text-sm font-bold text-slate-500">
+                    <span>日期结果</span>
+                    <div className="relative">
+                      <input
+                        value={timestampOutput}
+                        readOnly
+                        placeholder="日期结果会显示在这里"
+                        className="focus-ring w-full rounded-[1.35rem] border border-white/10 bg-slate-950/80 px-5 py-3 text-base font-black text-slate-100 shadow-[inset_0_1px_0_rgb(255_255_255/0.06)] transition-all duration-200 placeholder:text-slate-600 hover:border-cyan-300/40 focus:border-cyan-300/50 focus:outline-none focus:ring-4 focus:ring-cyan-300/15"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(timestampOutput, '日期')}
+                        className="absolute right-3 top-1/2 inline-flex size-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-400 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+                        aria-label="复制日期结果"
+                      >
+                        <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="grid gap-4 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_60px_-48px_rgb(0_0_0/0.95)]" aria-labelledby="date-to-timestamp-title">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">Date to Timestamp</p>
+                    <h3 id="date-to-timestamp-title" className="mt-2 text-xl font-black text-white">日期转时间戳</h3>
+                  </div>
+
+                  <label className="grid gap-2 text-sm font-bold text-slate-500">
+                    日期输入
+                    <input
+                      value={dateInput}
+                      onChange={(event) => {
+                        setDateInput(event.target.value)
+                        clearToast()
+                      }}
+                      placeholder="例如：2024-01-01 08:00:00"
+                      className="focus-ring rounded-[1.35rem] border border-white/10 bg-slate-950/80 px-5 py-3 text-base font-semibold text-slate-100 shadow-[inset_0_1px_0_rgb(255_255_255/0.06),0_16px_42px_-34px_rgb(34_211_238/0.65)] transition-all duration-200 placeholder:text-slate-600 hover:border-cyan-300/40 focus:border-cyan-300/50 focus:outline-none focus:ring-4 focus:ring-cyan-300/15"
+                    />
+                  </label>
+
+                  <div className="grid gap-2">
+                    <button
+                      type="button"
+                      onClick={handleDateToTimestamp}
+                      className="focus-ring inline-flex w-full cursor-pointer items-center justify-center rounded-full bg-cyan-300 px-5 py-2.5 text-sm font-black text-slate-950 transition-colors duration-200 hover:bg-cyan-200"
+                    >
+                      转换为时间戳
+                    </button>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={handleUseCurrentDate}
+                        className="focus-ring inline-flex cursor-pointer items-center justify-center rounded-full border border-cyan-300/25 bg-cyan-300/10 px-4 py-2.5 text-sm font-black text-cyan-100 transition-colors duration-200 hover:bg-cyan-300/15"
+                      >
+                        填入当前日期
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearDateForm}
+                        className="focus-ring inline-flex cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-black text-slate-200 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+                      >
+                        清空
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid gap-2 text-sm font-bold text-slate-500">
+                    <span>时间戳结果</span>
+                    <div className="relative">
+                      <input
+                        value={dateOutput}
+                        readOnly
+                        placeholder="时间戳结果会显示在这里"
+                        className="focus-ring w-full rounded-[1.35rem] border border-white/10 bg-slate-950/80 px-5 py-3 text-base font-black text-slate-100 shadow-[inset_0_1px_0_rgb(255_255_255/0.06)] transition-all duration-200 placeholder:text-slate-600 hover:border-cyan-300/40 focus:border-cyan-300/50 focus:outline-none focus:ring-4 focus:ring-cyan-300/15"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(dateOutput, '时间戳')}
+                        className="absolute right-3 top-1/2 inline-flex size-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-slate-400 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+                        aria-label="复制时间戳结果"
+                      >
+                        <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+            </div>
           </div>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   )
 }
